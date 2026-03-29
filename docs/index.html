@@ -156,6 +156,10 @@
   <script src="./vendor/filepond-plugin-file-validate-type/filepond-plugin-file-validate-type.js"></script>
   <!-- Plotly (local) -->
   <script src="./vendor/plotly/plotly.min.js"></script>
+  <!-- jsPDF + AutoTable (local) -->
+  <script src="./vendor/jspdf/jspdf.umd.min.js"></script>
+  <script src="./vendor/jspdf-autotable/jspdf.plugin.autotable.min.js"></script>
+  <script type="module" src="./pdf.js"></script>
   <!-- Favicon -->
   <link rel="icon" href="favicon.png" type="image/png" />
   <link rel="shortcut icon" href="favicon.png" type="image/png" />
@@ -590,57 +594,40 @@
       savePdfBtn.textContent = 'Preparing PDF…';
 
       try {
-        const chartWrap = document.getElementById('veiPlot');
-        let chartDataUrl = null;
-        if (chartWrap && window.Plotly && typeof Plotly.toImage === 'function') {
-          chartDataUrl = await Plotly.toImage(chartWrap, {
-            format: 'png',
-            width: 1300,
-            height: 760,
-            scale: 2
-          });
+        if (typeof window.generatePDF !== 'function') {
+          throw new Error('PDF generator is not available. Please refresh and try again.');
         }
 
-        const printWindow = window.open('', '_blank', 'noopener,noreferrer,width=1200,height=900');
-        if (!printWindow) throw new Error('Unable to open print window. Please allow pop-ups for this site.');
-
         const tablesHtml = resultsNode.querySelectorAll('table');
-        const generatedOn = new Date().toLocaleString();
-        let content = '';
+        const sections = [
+          { type: 'text', content: 'Vertical Equity Studies Report', isTitle: true },
+          { type: 'text', content: `Generated ${new Date().toLocaleString()}` }
+        ];
+
         tablesHtml.forEach((tbl, i) => {
           const titleNode = tbl.previousElementSibling;
           const title = titleNode && /^H[1-6]$/.test(titleNode.tagName) ? titleNode.textContent : `Table ${i + 1}`;
-          content += `<h3>${title}</h3>${tbl.outerHTML}`;
+          const bodyRows = Array.from(tbl.querySelectorAll('tbody tr'));
+          if (!bodyRows.length) return;
+          const headerRow = tbl.querySelector('thead tr');
+          const headers = headerRow
+            ? Array.from(headerRow.cells).map((cell) => (cell.textContent || '').trim())
+            : Array.from(bodyRows[0].cells).map((cell) => (cell.textContent || '').trim());
+          const rows = bodyRows.map((tr) => Array.from(tr.cells).map((cell) => (cell.textContent || '').trim()));
+
+          sections.push({ type: 'text', content: title, isTitle: true });
+          sections.push({ type: 'table', headers, rows });
         });
-        if (chartDataUrl) {
-          content += `<h3>VEI Chart</h3><img alt="VEI chart" src="${chartDataUrl}" style="width:100%;height:auto;border:1px solid #d9e1ea;border-radius:6px;" />`;
+
+        if (document.getElementById('veiPlot')) {
+          sections.push({ type: 'text', content: 'VEI Chart', isTitle: true });
+          sections.push({ type: 'chart', plotlyDivId: 'veiPlot', title: 'VEI Chart' });
         }
 
-        printWindow.document.write(`<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Vertical Equity Results PDF</title>
-  <style>
-    body { font-family: Arial, Helvetica, sans-serif; color:#0f172a; margin: 24px; }
-    h1 { margin: 0 0 4px; }
-    .sub { color:#475569; margin-bottom: 20px; }
-    h3 { margin: 20px 0 8px; }
-    table { border-collapse: collapse; width: 100%; margin-bottom: 12px; }
-    th, td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; vertical-align: top; }
-    th { background: #f8fafc; }
-    @page { size: auto; margin: 14mm; }
-  </style>
-</head>
-<body>
-  <h1>Vertical Equity Studies Report</h1>
-  <div class="sub">Generated ${generatedOn}</div>
-  ${content}
-</body>
-</html>`);
-        printWindow.document.close();
-        printWindow.focus();
-        printWindow.print();
+        await window.generatePDF({
+          filename: 'vertical-equity-results.pdf',
+          sections
+        });
       } catch (err) {
         showMessages([`PDF export failed: ${err && err.message ? err.message : err}`]);
       } finally {
