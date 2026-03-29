@@ -106,10 +106,34 @@
     .filepond--panel-root,
     .filepond--panel-root * { background-color: #fff; }
     .filepond--drip { background: transparent; opacity: 0 !important; }
-    .filepond--item-panel,
-    .filepond--panel-top,
-    .filepond--panel-center,
-    .filepond--panel-bottom { background-color: transparent !important; }
+    .filepond--item-panel {
+      background: linear-gradient(135deg, #1d4ed8, #2563eb) !important;
+      border: 1px solid #1e40af;
+      box-shadow: 0 8px 18px rgba(30, 64, 175, 0.24);
+    }
+    .filepond--file {
+      color: #eff6ff;
+      font-weight: 600;
+    }
+    .filepond--file-info-main,
+    .filepond--file-info-sub {
+      color: #eff6ff !important;
+      opacity: 1;
+    }
+    .filepond--file-status-main,
+    .filepond--file-status-sub {
+      color: #dbeafe !important;
+      opacity: 0.95;
+    }
+    .filepond--file-action-button {
+      color: #eff6ff !important;
+      background-color: rgba(15, 23, 42, 0.24) !important;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+    }
+    .filepond--file-action-button:hover,
+    .filepond--file-action-button:focus-visible {
+      background-color: rgba(15, 23, 42, 0.4) !important;
+    }
 
     .drawer { border: 1px solid var(--line); border-radius: 10px; background: #fff; }
     .drawer-summary { cursor: pointer; list-style: none; padding: 12px 14px; display: flex; justify-content: space-between; align-items: center; font-weight: 650; }
@@ -133,7 +157,7 @@
     .btn-secondary { background: #fff; color: var(--accent-strong); border-color: var(--accent); }
     .btn-secondary:hover, .btn-secondary:focus-visible { background: #eef4ff; text-decoration: none; }
 
-    #runBtn.primary { width: 100%; padding: 12px 16px; font-size: 1rem; }
+    #runBtn { width: 100%; padding: 12px 16px; font-size: 1rem; }
 
     footer { padding: 18px 16px 24px; color: var(--muted); font-size: 12px; text-align: center; }
 
@@ -235,7 +259,7 @@
               <select id="valFieldSel"></select>
             </div>
             <div class="field full">
-              <button id="runBtn" type="button" class="primary">Compute metrics</button>
+              <button id="runBtn" type="button" class="btn btn-secondary">Compute metrics</button>
             </div>
           </div>
           <div class="note">Assumptions: comma-delimited, UTF-8, header present. Rows with empty/non-numeric sale or valuation are ignored. Rows with sale_price ≤ 0 are excluded.</div>
