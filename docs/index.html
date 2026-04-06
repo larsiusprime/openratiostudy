@@ -926,20 +926,20 @@
       const ciMarkerLine = bw ? '#000000' : '#1d4ed8';
       const ciSymbol = bw ? 'square' : 'diamond';
 
-      // Build inner layout: Plotly div + controls column
-      const btnBase = 'display:flex;align-items:center;gap:7px;width:100%;padding:6px 9px;' +
+      // Build inner layout: top controls row + Plotly chart
+      const btnBase = 'display:flex;align-items:center;gap:7px;padding:6px 9px;' +
         'border-radius:7px;border:1px solid #93c5fd;background:#ffffff;' +
-        'color:#1e3a8a;font:inherit;font-size:12px;cursor:pointer;text-align:left;margin-bottom:4px;';
+        'color:#1e3a8a;font:inherit;font-size:12px;cursor:pointer;text-align:left;';
       const dot = c => `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${c};flex-shrink:0;"></span>`;
       wrap.innerHTML = `
-        <div style="display:flex;gap:0;align-items:flex-start;">
-          <div id="veiPlot" style="flex:1;min-height:420px;"></div>
-          <div style="flex:0 0 148px;padding:50px 0 0 14px;display:flex;flex-direction:column;">
-            <div style="font-size:11px;color:#64748b;margin-bottom:8px;font-weight:600;">click to show/hide:</div>
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 8px 2px;">
+            <div style="font-size:11px;color:#64748b;font-weight:600;white-space:nowrap;">click to show/hide:</div>
             <button id="veiBtnBoxes"  style="${btnBase}">${dot('#4285F4')}Box distribution</button>
             <button id="veiBtnMedian" style="${btnBase}">${dot(medColor)}Sample median</button>
             <button id="veiBtnCI"     style="${btnBase}">${dot('#ffffff')}90% CI (median)</button>
           </div>
+          <div id="veiPlot" style="min-height:420px;"></div>
         </div>`;
 
       const plotEl = document.getElementById('veiPlot');
