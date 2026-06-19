@@ -258,11 +258,11 @@ function computeRegionStats(sale, val, ratios, regions, sampleMedian){
   const N = ratios.length;
   const nNeighborhoods = new Set(regions).size;
 
-  if (N < 10){
-    return { VEI: NaN, VEI_significance: NaN, strata: [], nNeighborhoods, vei_note: 'Cannot compute: N < 10' };
+  if (N < 20){
+    return { VEI: NaN, VEI_significance: NaN, strata: [], nNeighborhoods, conclusion: 'Insufficient Data', vei_note: 'Cannot compute: N < 20' };
   }
   if (nNeighborhoods < 2){
-    return { VEI: NaN, VEI_significance: NaN, strata: [], nNeighborhoods, vei_note: 'Cannot compute: need at least 2 distinct regions.' };
+    return { VEI: NaN, VEI_significance: NaN, strata: [], nNeighborhoods, conclusion: 'Insufficient Data', vei_note: 'Cannot compute: need at least 2 distinct regions.' };
   }
 
   // Same group-count selection as VEI (driven by number of rows)
@@ -289,7 +289,7 @@ function computeRegionStats(sale, val, ratios, regions, sampleMedian){
   const strata = strataFromGroups(groups, ratios, sortKey);
 
   if (strata.length < 2){
-    return { VEI: NaN, VEI_significance: NaN, strata, nNeighborhoods, vei_note: 'Insufficient strata after tie handling (regions share the same price level).' };
+    return { VEI: NaN, VEI_significance: NaN, strata, nNeighborhoods, conclusion: 'Insufficient Data', vei_note: 'Insufficient strata after tie handling (regions share the same price level).' };
   }
 
   const first = strata[0];
@@ -297,7 +297,19 @@ function computeRegionStats(sale, val, ratios, regions, sampleMedian){
   const VEI = ((last.median - first.median) / sampleMedian) * 100;
   // Significance uses the corrected formula (matches computeVEIWithCI).
   const VEI_significance = ((last.ci_low - first.ci_high) / sampleMedian) * 100;
-  return { VEI, VEI_significance, strata, nNeighborhoods, vei_note: '' };
+
+  // Conclusion based on the same VEI decision table.
+  const cisOverlap = !(first.ci_high < last.ci_low || last.ci_high < first.ci_low);
+  let conclusion = 'Compliant';
+  if (Math.abs(VEI) > 10) {
+    if (!cisOverlap && Math.abs(VEI_significance) > 10) {
+      conclusion = VEI > 0 ? 'Progressivity' : 'Regressivity';
+    } else {
+      conclusion = 'Inconclusive';
+    }
+  }
+
+  return { VEI, VEI_significance, strata, nNeighborhoods, conclusion, vei_note: '' };
 }
 
 // ---------- Main compute ----------
