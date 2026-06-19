@@ -158,72 +158,82 @@ function medianCIFromRatios(ratiosIn, { confidence = 0.95 } = {}) {
   };
 }
 
+// ---------- Grouping helpers (shared by VEI and region stats) ----------
+
+// Divide rows (indices 0..N-1) into G groups by ascending sortKey[i].
+// Groups are kept as even as possible, with leftovers distributed to the first
+// groups. Group boundaries are extended across ties so that rows sharing the
+// same sortKey value never get split between two groups.
+function groupBySortKey(sortKey, N, G){
+  const idx = [];
+  for (let i = 0; i < N; i++) idx.push(i);
+  idx.sort((a, b) => (sortKey[a] === sortKey[b] ? a - b : sortKey[a] - sortKey[b]));
+
+  const base = Math.floor(N / G); let remainder = N % G; const groups = []; let start = 0;
+  for (let g = 0; g < G; g++){
+    let size = base + (remainder > 0 ? 1 : 0); if (remainder > 0) remainder--;
+    let end = start + size; while (end < N && sortKey[idx[end-1]] === sortKey[idx[end]]) end++;
+    groups.push(idx.slice(start, end)); start = end; if (start >= N) break;
+  }
+  // Make sure we don't have any trailing empty groups
+  if (groups.length && groups[groups.length-1].length === 0) groups.pop();
+  return groups;
+}
+
+// For each group, package up the median ratio, its 90% CI, the sample count,
+// and the median "level" (price-level proxy) of the group.
+function strataFromGroups(groups, ratios, levelByIdx){
+  const strata = [];
+  for (let i = 0; i < groups.length; i++){
+    const group = groups[i];
+    const r = group.map(k => ratios[k]);
+    const m = median(r);
+    const ci = r.length >= 2 ? medianCIFromRatios(r, { confidence: 0.90 }) : {low: NaN, high: NaN};
+    const levelVals = group.map(k => levelByIdx[k]);
+    const medProxy = median(levelVals);
+    strata.push({ n: r.length, median: m, ci_low: ci.low, ci_high: ci.high, ratios: r, medProxy });
+  }
+  return strata;
+}
+
 // ---------- VEI ----------
 function computeVEIWithCI(sale, val, ratios, sampleMedian){
-  
+
   // Get the number of samples
   const N = ratios.length;
-  
+
   // Spec requires at least 20 sales to compute VEI
   if (N < 20){
     return { VEI: NaN, VEI_significance: NaN, strata: [], conclusion: 'Insufficient Data', vei_note: 'Cannot compute VEI: N < 20' };
   }
-  
+
   // Calculate the number of groups:
   // - 2 halves if we have 10-50 samples
   // - 4 quartiles if we have 51-500 samples
   // - 10 deciles if we have 501+ samples
   let G = 10; if (N <= 50) G = 2; else if (N <= 500) G = 4;
-  
+
   // Calculate the "market proxy" statistic for each sale price/assessed value pair
   // For each sale/ratio pair, this is:
   // (50% of the sale price) + (50% of the (assessed value divided by the median ratio))
   const proxy = sale.map((s,i)=> 0.5*s + 0.5*(val[i] / sampleMedian));
-  
-  // Create a sorted list of market proxy values
-  const idx = [];
-  for (let i = 0; i < N; i++) idx.push(i);
-  idx.sort((a, b) => (proxy[a] === proxy[b] ? a - b : proxy[a] - proxy[b]));
-  
-  // Divide everything nicely up into evenly sized groups
-  // Account for leftover samples in a nice & clean way
-  const base = Math.floor(N / G); let remainder = N % G; const groups = []; let start=0;
-  for (let g=0; g<G; g++){
-    let size = base + (remainder > 0 ? 1 : 0); if (remainder > 0) remainder--;
-    let end = start + size; while (end < N && proxy[idx[end-1]] === proxy[idx[end]]) end++;
-    groups.push(idx.slice(start,end)); start = end; if (start >= N) break;
-  }
-  // Make sure we don't have any trailing empty groups
-  if (groups.length && groups[groups.length-1].length === 0) groups.pop();
-  
-  // For each group, get the:
-  // - median ratio of the group
-  // - upper & lower confidence interval of that median ratio
-  // - number of samples
-  // Then package those all up as strata
-  const strata = [];
-  for (let i=0; i<groups.length; i++){
-    const group = groups[i];
-    const r = group.map(k=>ratios[k]);
-    const m = median(r);
-    const ci = r.length >= 2 ? medianCIFromRatios(r, { confidence: 0.90 }) : {low: NaN, high: NaN};
-    const proxyVals = group.map(k => proxy[k]);
-    const medProxy = median(proxyVals);
-    strata.push({ n: r.length, median: m, ci_low: ci.low, ci_high: ci.high, ratios: r, medProxy });
-  }
-  
+
+  // Sort rows by market proxy and divide into evenly sized groups, then build strata
+  const groups = groupBySortKey(proxy, N, G);
+  const strata = strataFromGroups(groups, ratios, proxy);
+
   // If we have less than 2 strata, we're in an invalid situation
   if (strata.length < 2){
     return { VEI: NaN, VEI_significance: NaN, strata, conclusion: 'Insufficient Data', vei_note: 'Insufficient strata after tie handling.' };
   }
-  
+
   // Identify the first (lowest) and last (highest) strata
   const first = strata[0];
   const last = strata[strata.length-1];
-  
+
   // Calculate VEI statistic
   const VEI = ((last.median - first.median) / sampleMedian) * 100;
-  
+
   // Calculate VEI significance
   const VEI_significance = ((last.ci_low - first.ci_high) / sampleMedian) * 100;
 
@@ -239,6 +249,55 @@ function computeVEIWithCI(sale, val, ratios, sampleMedian){
   }
 
   return { VEI, VEI_significance, strata, conclusion, vei_note: '' };
+}
+
+// ---------- Neighborhood price level (region) stats ----------
+// Same idea as VEI, but rows are bucketed by the price level of the REGION they
+// belong to (median per-row proxy within that region), not by their own proxy.
+function computeRegionStats(sale, val, ratios, regions, sampleMedian){
+  const N = ratios.length;
+  const nNeighborhoods = new Set(regions).size;
+
+  if (N < 10){
+    return { VEI: NaN, VEI_significance: NaN, strata: [], nNeighborhoods, vei_note: 'Cannot compute: N < 10' };
+  }
+  if (nNeighborhoods < 2){
+    return { VEI: NaN, VEI_significance: NaN, strata: [], nNeighborhoods, vei_note: 'Cannot compute: need at least 2 distinct regions.' };
+  }
+
+  // Same group-count selection as VEI (driven by number of rows)
+  let G = 10; if (N <= 50) G = 2; else if (N <= 500) G = 4;
+
+  // Per-row VEI proxy (identical to the VEI section)
+  const proxy = sale.map((s,i)=> 0.5*s + 0.5*(val[i] / sampleMedian));
+
+  // Neighborhood price level = median per-row proxy within each region
+  const byRegion = new Map();
+  for (let i = 0; i < N; i++){
+    const key = regions[i];
+    if (!byRegion.has(key)) byRegion.set(key, []);
+    byRegion.get(key).push(proxy[i]);
+  }
+  const level = new Map();
+  for (const [key, arr] of byRegion) level.set(key, median(arr));
+
+  // Bucket ROWS by their region's price level. Because every row in a region
+  // shares one level value, the tie-extension in groupBySortKey keeps a region
+  // intact within a single decile.
+  const sortKey = regions.map(rg => level.get(rg));
+  const groups = groupBySortKey(sortKey, N, G);
+  const strata = strataFromGroups(groups, ratios, sortKey);
+
+  if (strata.length < 2){
+    return { VEI: NaN, VEI_significance: NaN, strata, nNeighborhoods, vei_note: 'Insufficient strata after tie handling (regions share the same price level).' };
+  }
+
+  const first = strata[0];
+  const last = strata[strata.length-1];
+  const VEI = ((last.median - first.median) / sampleMedian) * 100;
+  // Significance uses the corrected formula (matches computeVEIWithCI).
+  const VEI_significance = ((last.ci_low - first.ci_high) / sampleMedian) * 100;
+  return { VEI, VEI_significance, strata, nNeighborhoods, vei_note: '' };
 }
 
 // ---------- Main compute ----------
@@ -283,6 +342,54 @@ function computeMetricsFromPairs(pairs){
   return {messages, n, med, ci, COD, PRD, PRB_slope, PRB_p, ...vei};
 }
 
+// ---------- Region (neighborhood price level) compute ----------
+// `pairs` is [[saleRaw, valRaw], ...] and `regions` is the parallel array of
+// region labels (same length/order as pairs). Filtering mirrors
+// computeMetricsFromPairs so the sample median ratio matches the main results;
+// only rows with a non-blank region are used for the grouping.
+function computeRegionStatsFromPairs(pairs, regions){
+  const filtered = [];
+  let ignored = 0, excludedNonPos = 0;
+  for (let i = 0; i < pairs.length; i++){
+    const [saleRaw, valRaw] = pairs[i];
+    const sale = parseNumber(saleRaw);
+    const val = parseNumber(valRaw);
+    if (!isFinite(sale) || !isFinite(val)) { ignored++; continue; }
+    if (sale <= 0) { excludedNonPos++; continue; }
+    const regionRaw = regions ? regions[i] : undefined;
+    const region = (regionRaw === null || regionRaw === undefined) ? '' : String(regionRaw).trim();
+    filtered.push({ sale, val, ratio: val / sale, region });
+  }
+
+  if (!filtered.length){
+    return { messages: ['No valid rows after exclusions.'], n: 0, error: 'No valid rows after exclusions.' };
+  }
+
+  // Sample median ratio over ALL valid sale/val rows (matches the main results,
+  // so the price-level proxy is identical to the VEI section).
+  const med = median(filtered.map(r => r.ratio));
+
+  // Keep only rows with a non-blank region for the grouping.
+  const usable = filtered.filter(r => r.region !== '');
+  const excludedNoRegion = filtered.length - usable.length;
+
+  if (!usable.length){
+    return { messages: [`No rows with a non-blank region value.`], n: 0, med, error: 'No rows with a non-blank region value.' };
+  }
+
+  const sale = usable.map(r => r.sale);
+  const val = usable.map(r => r.val);
+  const ratios = usable.map(r => r.ratio);
+  const regs = usable.map(r => r.region);
+
+  const stats = computeRegionStats(sale, val, ratios, regs, med);
+
+  const messages = [];
+  messages.push(`${usable.length} rows grouped across ${stats.nNeighborhoods} region(s). ${ignored} ignored for empty/non-numeric fields, ${excludedNonPos} excluded for sale ≤ 0, ${excludedNoRegion} excluded for blank region.`);
+
+  return { messages, n: usable.length, med, ...stats };
+}
+
 // ---------- Worker messaging ----------
 self.onmessage = (e) => {
   const { type } = e.data || {};
@@ -292,6 +399,14 @@ self.onmessage = (e) => {
       postMessage({ type: 'progress', p: 0.05, msg: 'Parsing and filtering rows…' });
       const out = computeMetricsFromPairs(pairs);
       postMessage({ type: 'done', result: out });
+    } catch (err) {
+      postMessage({ type: 'error', error: String(err && err.message || err) });
+    }
+  } else if (type === 'computeRegion'){
+    try {
+      const { pairs, regions } = e.data;
+      const out = computeRegionStatsFromPairs(pairs, regions);
+      postMessage({ type: 'doneRegion', result: out });
     } catch (err) {
       postMessage({ type: 'error', error: String(err && err.message || err) });
     }

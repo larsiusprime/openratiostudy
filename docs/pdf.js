@@ -83,6 +83,7 @@ async function generatePDF(config) {
   const doc = new jsPDFCtor({ unit: 'mm', format: 'a4' });
   const sections = Array.isArray(config && config.sections) ? config.sections : [];
   const filename = (config && config.filename) ? config.filename : 'report.pdf';
+  const bw = !!(config && config.bw);
   let cursorY = PAGE.margin;
 
   for (const section of sections) {
@@ -94,14 +95,21 @@ async function generatePDF(config) {
 
     if (section.type === 'text') {
       const isTitle = Boolean(section.isTitle);
+      const small = Boolean(section.small);
+      const align = section.align === 'right' ? 'right' : (section.align === 'center' ? 'center' : 'left');
       doc.setFont('helvetica', isTitle ? 'bold' : 'normal');
-      doc.setFontSize(isTitle ? PAGE.titleFontSize : PAGE.bodyFontSize);
+      doc.setFontSize(isTitle ? PAGE.titleFontSize : (small ? PAGE.bodyFontSize - 2 : PAGE.bodyFontSize));
+      if (small) doc.setTextColor(100, 116, 139); // muted gray for fine print
       const text = String(section.content || '');
       const wrapped = doc.splitTextToSize(text, PAGE.textMaxWidth);
-      const lineHeight = isTitle ? 6 : 5.2;
-      const estimatedHeight = Math.max(8, wrapped.length * lineHeight);
+      const lineHeight = isTitle ? 6 : (small ? 4.4 : 5.2);
+      const estimatedHeight = Math.max(small ? 5 : 8, wrapped.length * lineHeight);
       cursorY = ensureSpace(doc, cursorY, estimatedHeight);
-      doc.text(wrapped, PAGE.margin, cursorY, { maxWidth: PAGE.textMaxWidth });
+      const x = align === 'right' ? (PAGE.margin + PAGE.usableWidth)
+        : align === 'center' ? (PAGE.margin + PAGE.usableWidth / 2)
+        : PAGE.margin;
+      doc.text(wrapped, x, cursorY, { maxWidth: PAGE.textMaxWidth, align });
+      if (small) doc.setTextColor(31, 41, 55); // reset
       cursorY += estimatedHeight + 2;
       continue;
     }
@@ -121,11 +129,107 @@ async function generatePDF(config) {
           cursorY = data.cursor && data.cursor.y ? data.cursor.y : PAGE.margin;
         },
       };
+      if (bw) {
+        // Black & white: bold black headers on white with a black outline around every cell.
+        tableOptions.theme = 'grid';
+        tableOptions.styles = { font: 'helvetica', fontSize: PAGE.bodyFontSize, textColor: [0, 0, 0], lineColor: [0, 0, 0], lineWidth: 0.2 };
+        tableOptions.headStyles = { fontStyle: 'bold', fillColor: [255, 255, 255], textColor: [0, 0, 0], lineColor: [0, 0, 0], lineWidth: 0.2 };
+      }
       if (headers.length) {
         tableOptions.head = [headers];
       }
       doc.autoTable(tableOptions);
       cursorY = (doc.lastAutoTable && doc.lastAutoTable.finalY ? doc.lastAutoTable.finalY : cursorY) + 8;
+      continue;
+    }
+
+    if (section.type === 'fieldchip') {
+      // A label followed by a rounded "capsule" containing a literal field name,
+      // mirroring the .field-chip styling used on the page.
+      const label = String(section.label || 'Chosen field:');
+      const value = String(section.value || '');
+      const labelSize = PAGE.bodyFontSize;
+      const valSize = PAGE.bodyFontSize - 1;
+      const padX = 2.4;
+      const capH = 5.8;
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(labelSize);
+      const labelW = doc.getTextWidth(label + ' ');
+
+      doc.setFont('courier', 'normal');
+      doc.setFontSize(valSize);
+      const capW = doc.getTextWidth(value) + padX * 2;
+
+      cursorY = ensureSpace(doc, cursorY, capH + 6);
+      const baseline = cursorY + 3;
+
+      // Label
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(labelSize);
+      doc.setTextColor(31, 41, 55);
+      doc.text(label, PAGE.margin, baseline);
+
+      // Capsule (white/black in B&W mode, indigo otherwise)
+      const capX = PAGE.margin + labelW;
+      const capY = baseline - 4.1;
+      doc.setFillColor(255, 255, 255);
+      doc.setDrawColor(bw ? 0 : 199, bw ? 0 : 210, bw ? 0 : 254);
+      doc.setLineWidth(0.2);
+      doc.roundedRect(capX, capY, capW, capH, 1.4, 1.4, 'FD');
+      doc.setFont('courier', 'normal');
+      doc.setFontSize(valSize);
+      doc.setTextColor(bw ? 0 : 55, bw ? 0 : 55, bw ? 0 : 163);
+      doc.text(value, capX + padX, baseline);
+
+      // Reset
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(PAGE.bodyFontSize);
+      doc.setTextColor(31, 41, 55);
+      cursorY = capY + capH + 6;
+      continue;
+    }
+
+    if (section.type === 'titlechip') {
+      // A bold heading that leads with a capsule (the literal field name),
+      // followed by the rest of the heading text.
+      const value = String(section.value || '');
+      const suffix = String(section.suffix || '').replace(/^\s+/, '');
+      const size = PAGE.titleFontSize;
+      const valSize = size - 2;
+      const padX = 2.4;
+      const capH = 6.8;
+
+      doc.setFont('courier', 'bold');
+      doc.setFontSize(valSize);
+      const capW = doc.getTextWidth(value) + padX * 2;
+
+      cursorY = ensureSpace(doc, cursorY, capH + 6);
+      const baseline = cursorY + 5;
+      const capX = PAGE.margin;
+      const capY = baseline - 5;
+
+      // Capsule (white/black in B&W mode, indigo otherwise)
+      doc.setFillColor(255, 255, 255);
+      doc.setDrawColor(bw ? 0 : 199, bw ? 0 : 210, bw ? 0 : 254);
+      doc.setLineWidth(0.2);
+      doc.roundedRect(capX, capY, capW, capH, 1.6, 1.6, 'FD');
+      doc.setFont('courier', 'bold');
+      doc.setFontSize(valSize);
+      doc.setTextColor(bw ? 0 : 55, bw ? 0 : 55, bw ? 0 : 163);
+      doc.text(value, capX + padX, baseline);
+
+      // Suffix (rest of the heading)
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(size);
+      doc.setTextColor(bw ? 0 : 31, bw ? 0 : 41, bw ? 0 : 55);
+      doc.text(suffix, capX + capW + 1.8, baseline);
+
+      // Reset
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(PAGE.bodyFontSize);
+      doc.setTextColor(31, 41, 55);
+      cursorY = capY + capH + 6;
       continue;
     }
 
