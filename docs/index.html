@@ -315,6 +315,8 @@
       color: var(--text);
       margin: 18px 0 0;
     }
+    .yslider-input { cursor: ns-resize; }
+    .yslider-input:focus { cursor: text; box-shadow: 0 0 0 2px rgba(59,130,246,0.4); }
     #mapMessages {
       margin-top: 8px;
       font-size: 0.92rem;
@@ -908,6 +910,7 @@
       const groupLabel = G === 2 ? 'Half' : G === 4 ? 'Quartile' : G === 10 ? 'Decile' : 'Group';
       const boxIndices = Array.from({length: G}, (_, i) => i);
       const ciIndex = G;
+      const ctIndex = G + 1;
       const bw = isBWMode();
       const medColor = bw ? '#111827' : '#dc2626';
       const boxMarker = bw ? '#1f2937' : '#3b82f6';
@@ -961,20 +964,20 @@
       const fillBg = bw ? '#9ca3af' : '#bfdbfe';
       const handleAccent = bw ? '#111827' : '#3b82f6';
       const handleText = bw ? '#111827' : '#1e3a8a';
-      const handleBase = 'position:absolute;left:50%;transform:translate(-50%,-50%);width:48px;height:18px;' +
-        'line-height:14px;background:#fff;border:2px solid ' + handleAccent + ';border-radius:5px;' +
-        'font-size:10px;color:' + handleText + ';text-align:center;cursor:ns-resize;user-select:none;' +
-        'touch-action:none;box-shadow:0 1px 2px rgba(0,0,0,.15);z-index:2;';
+      const handleBase = 'position:absolute;left:50%;transform:translate(-50%,-50%);width:56px;min-width:0;height:22px;' +
+        'background:#fff;border:2px solid ' + handleAccent + ';border-radius:5px;' +
+        'font:inherit;font-size:11px;color:' + handleText + ';text-align:center;padding:0;box-sizing:border-box;' +
+        'outline:none;touch-action:none;box-shadow:0 1px 2px rgba(0,0,0,.15);z-index:2;';
       // Top margin shrinks when there's no native Plotly title (region chart uses an HTML title instead).
       const topMargin = title ? 50 : 30;
       wrap.innerHTML = `
         <div style="display:flex;gap:0;align-items:flex-start;">
-          <div style="flex:0 0 58px;align-self:stretch;min-height:420px;padding:${topMargin}px 8px 50px 0;box-sizing:border-box;">
+          <div style="flex:0 0 64px;align-self:stretch;min-height:420px;padding:${topMargin}px 8px 50px 0;box-sizing:border-box;">
             <div style="position:relative;height:100%;display:flex;justify-content:center;">
-              <div id="${btnPrefix}SliderTrack" title="Drag the handles to set the visible ratio range. Double-click to reset to default." style="position:relative;width:6px;height:100%;background:${trackBg};border-radius:3px;cursor:pointer;">
+              <div id="${btnPrefix}SliderTrack" title="Drag a handle to set the range, or click it to type a value. Double-click the track to reset." style="position:relative;width:6px;height:100%;background:${trackBg};border-radius:3px;cursor:pointer;">
                 <div id="${btnPrefix}SliderFill" style="position:absolute;left:-2px;right:-2px;background:${fillBg};border-radius:4px;"></div>
-                <div id="${btnPrefix}HandleHi" style="${handleBase}"></div>
-                <div id="${btnPrefix}HandleLo" style="${handleBase}"></div>
+                <input id="${btnPrefix}HandleHi" class="yslider-input" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" style="${handleBase}" />
+                <input id="${btnPrefix}HandleLo" class="yslider-input" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" style="${handleBase}" />
               </div>
             </div>
           </div>
@@ -983,8 +986,9 @@
             <div style="font-size:11px;color:#64748b;margin-bottom:8px;font-weight:600;">click to show/hide:</div>
             <button id="${btnPrefix}BtnBoxes"  style="${btnBase}">${dot('#4285F4')}Box distribution</button>
             <button id="${btnPrefix}BtnMedian" style="${btnBase}">${dot(medColor)}Sample median</button>
-            <button id="${btnPrefix}BtnCI"     style="${btnBase}">${dot('#ffffff')}90% CI (median)</button>
-            <div style="font-size:11px;color:#64748b;margin-top:4px;">Y range: drag the slider on the left (double-click to reset).</div>
+            <button id="${btnPrefix}BtnCI"     style="${btnBase}">${dot(bw ? '#111827' : '#0f172a')}90% CI (bounds)</button>
+            <button id="${btnPrefix}BtnCT"     style="${btnBase}">${dot(ciMarkerLine)}Central tendency</button>
+            <div style="font-size:11px;color:#64748b;margin-top:4px;">Y range: drag a handle on the left, or click it to type a value. Double-click the track to reset.</div>
           </div>
         </div>`;
 
@@ -1017,13 +1021,25 @@
           thickness: 2.5,
           width: 10,
         },
-        marker: { symbol: ciSymbol, size: 9, color: ciMarkerColor, line: { color: ciMarkerLine, width: 1.5 } },
+        marker: { symbol: 'line-ew', size: 9, color: ciMarkerLine, line: { color: ciMarkerLine, width: 2 } },
         customdata: data.strata.map(s => [s.ci_low, s.ci_high]),
         hovertemplate:
           '<b>%{x}</b><br>' +
           'Median: %{y:.4f}<br>' +
           '90% CI: [%{customdata[0]:.4f}, %{customdata[1]:.4f}]' +
           '<extra></extra>',
+      });
+
+      // Central tendency: a blue-outlined white diamond at each group's median
+      // (same marker as the old CI), sized to fully obscure the CI median tick.
+      traces.push({
+        type: 'scatter',
+        mode: 'markers',
+        showlegend: false,
+        x: data.strata.map((_, i) => `${groupLabel} ${i + 1}`),
+        y: data.strata.map(s => s.median),
+        marker: { symbol: ciSymbol, size: 12, color: ciMarkerColor, line: { color: ciMarkerLine, width: 1.5 } },
+        hovertemplate: '<b>%{x}</b><br>Median: %{y:.4f}<extra></extra>',
       });
 
       const layout = {
@@ -1051,54 +1067,86 @@
         const hHi   = document.getElementById(`${btnPrefix}HandleHi`);
         const hLo   = document.getElementById(`${btnPrefix}HandleLo`);
         if (!track || !fill || !hHi || !hLo) return;
-        const span = (fullMax - fullMin) || 1;
+        const loBound = Math.min(0, fullMin); // slider always reaches at least 0 (lower only if data is negative)
+        const span = (fullMax - loBound) || 1;
         const minGap = span * 0.01;
         let curLo = defLo, curHi = defHi;
-        const frac = v => (v - fullMin) / span;
+        const frac = v => (v - loBound) / span;
         const fmt = v => Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(2);
+        // Clamp a proposed value into its valid bound and store it.
+        function setFromValue(which, v){
+          if (which === 'hi') curHi = Math.min(fullMax, Math.max(v, curLo + minGap));
+          else                curLo = Math.max(loBound, Math.min(v, curHi - minGap));
+        }
         function paint(){
           hHi.style.top = ((1 - frac(curHi)) * 100) + '%';
           hLo.style.top = ((1 - frac(curLo)) * 100) + '%';
           fill.style.top = ((1 - frac(curHi)) * 100) + '%';
           fill.style.bottom = (frac(curLo) * 100) + '%';
-          hHi.textContent = fmt(curHi);
-          hLo.textContent = fmt(curLo);
+          // Don't clobber the field the user is actively typing in.
+          if (document.activeElement !== hHi) hHi.value = fmt(curHi);
+          if (document.activeElement !== hLo) hLo.value = fmt(curLo);
         }
         function apply(){ Plotly.relayout(plotEl, { 'yaxis.range': [curLo, curHi], 'yaxis.autorange': false }); }
         paint();
-        function startDrag(which){
-          return function(ev){
-            ev.preventDefault();
+
+        // Each handle is both draggable and an editable text field. A press that
+        // moves is a drag; a press that doesn't move is a click → focus to edit.
+        function wireHandle(input, which){
+          input.addEventListener('pointerdown', function(ev){
+            // Pop the handle being grabbed above the other so overlapping handles stay clickable.
+            const other = input === hHi ? hLo : hHi;
+            input.style.zIndex = '4'; other.style.zIndex = '3';
+            if (document.activeElement === input) return; // already editing: normal text behavior
+            ev.preventDefault();                          // suppress auto-focus so we can detect drag vs click
+            const startY = ev.clientY;
+            let moved = false;
             const move = e => {
+              if (!moved && Math.abs(e.clientY - startY) < 3) return;
+              moved = true;
               const rect = track.getBoundingClientRect();
               let f = 1 - (e.clientY - rect.top) / rect.height;
               f = Math.max(0, Math.min(1, f));
-              const v = fullMin + f * span;
-              if (which === 'hi') curHi = Math.min(fullMax, Math.max(v, curLo + minGap));
-              else                curLo = Math.max(fullMin, Math.min(v, curHi - minGap));
+              setFromValue(which, loBound + f * span);
               paint(); apply();
             };
             const up = () => {
               window.removeEventListener('pointermove', move);
               window.removeEventListener('pointerup', up);
+              if (!moved){ input.focus(); input.select(); } // click → edit
             };
             window.addEventListener('pointermove', move);
             window.addEventListener('pointerup', up);
-          };
+          });
+          input.addEventListener('keydown', e => {
+            if (e.key === 'Enter'){ e.preventDefault(); input.blur(); }
+            else if (e.key === 'Escape'){ e.preventDefault(); input.value = fmt(which === 'hi' ? curHi : curLo); input.blur(); }
+          });
+          // Validate on defocus: snap whatever was typed into the valid bound.
+          input.addEventListener('blur', () => {
+            const v = parseFloat(String(input.value).replace(/,/g, ''));
+            if (isFinite(v)) setFromValue(which, v);
+            paint(); apply();
+          });
         }
-        hHi.addEventListener('pointerdown', startDrag('hi'));
-        hLo.addEventListener('pointerdown', startDrag('lo'));
-        track.addEventListener('dblclick', () => { curLo = defLo; curHi = defHi; paint(); apply(); });
+        wireHandle(hHi, 'hi');
+        wireHandle(hLo, 'lo');
+        hHi.style.zIndex = '4'; hLo.style.zIndex = '3'; // upper handle on top by default
+        track.addEventListener('dblclick', (e) => {
+          if (e.target !== track && e.target !== fill) return; // not when double-clicking a handle
+          curLo = defLo; curHi = defHi; paint(); apply();
+        });
       })();
 
       // Toggle wiring
-      const state = { boxes: true, ci: false, median: true };
+      const state = { boxes: true, ci: false, median: true, ct: false };
       function styleBtn(btn, active) {
         btn.style.borderColor = active ? '#3b82f6' : '#cbd5e1';
         btn.style.color       = active ? '#1e3a8a' : '#94a3b8';
       }
-      Plotly.restyle(plotEl, { visible: false }, [ciIndex]);
+      Plotly.restyle(plotEl, { visible: false }, [ciIndex, ctIndex]);
       styleBtn(document.getElementById(`${btnPrefix}BtnCI`), false);
+      styleBtn(document.getElementById(`${btnPrefix}BtnCT`), false);
       document.getElementById(`${btnPrefix}BtnBoxes`).addEventListener('click', function() {
         state.boxes = !state.boxes;
         Plotly.restyle(plotEl, { visible: state.boxes }, boxIndices);
@@ -1108,6 +1156,11 @@
         state.ci = !state.ci;
         Plotly.restyle(plotEl, { visible: state.ci }, [ciIndex]);
         styleBtn(this, state.ci);
+      });
+      document.getElementById(`${btnPrefix}BtnCT`).addEventListener('click', function() {
+        state.ct = !state.ct;
+        Plotly.restyle(plotEl, { visible: state.ct }, [ctIndex]);
+        styleBtn(this, state.ct);
       });
       document.getElementById(`${btnPrefix}BtnMedian`).addEventListener('click', function() {
         state.median = !state.median;
@@ -1191,7 +1244,7 @@
         <div class="callout-note"><strong>Note:</strong> This is <em>not</em> IAAO's VEI test. This is an original test by <strong>openratiostudy.com</strong> that reproduces the exact same math, but groups by regional price level, not by individual sale price. We do not mean to imply any official endorsement by IAAO in presenting this test.</div>
         <table><tbody>${rows.join('')}</tbody></table>
         ${strataHtml}
-        <div class="region-chart-title">Equity across ${chip} price levels</div>
+        <div class="region-chart-title">Vertical Equity across ${chip} price levels</div>
         <div id="regionChart" style="margin-top:4px;min-height:420px;"></div>`;
 
       // No native Plotly title (it can't carry the chip); the HTML title above stands in.
